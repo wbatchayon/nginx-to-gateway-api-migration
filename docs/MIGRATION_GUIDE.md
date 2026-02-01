@@ -68,7 +68,7 @@ Gateway API élimine complètement les snippets dynamiques. Toute configuration 
 ┌─────────────────────────────────────────────────────────────┐
 │ Phase 0: État actuel                                        │
 │ ┌─────────────┐                                             │
-│ │ NGINX       │ ──→ Apps 1-10                               │
+│ │ NGINX       │ → Apps 1-10                                 │
 │ │ Ingress     │                                             │
 │ └─────────────┘                                             │
 └─────────────────────────────────────────────────────────────┘
@@ -76,32 +76,32 @@ Gateway API élimine complètement les snippets dynamiques. Toute configuration 
 ┌─────────────────────────────────────────────────────────────┐
 │ Phase 1: Coexistence (2 semaines)                           │
 │ ┌─────────────┐                                             │
-│ │ NGINX       │ ──→ Apps 1-10 (legacy)                      │
+│ │ NGINX       │ → Apps 1-10 (legacy)                        │
 │ │ Ingress     │                                             │
 │ └─────────────┘                                             │
 │ ┌─────────────┐                                             │
-│ │ Gateway API │ ──→ App Test (nouveau)                      │
+│ │ Gateway API │ → App Test (nouveau)                        │
 │ └─────────────┘                                             │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
 │ Phase 2: Migration par vagues (4-6 semaines)                │
 │ ┌─────────────┐                                             │
-│ │ NGINX       │ ──→ Apps 6-10 (50%)                         │
+│ │ NGINX       │ → Apps 6-10 (50%)                           │
 │ │ Ingress     │                                             │
 │ └─────────────┘                                             │
 │ ┌─────────────┐                                             │
-│ │ Gateway API │ ──→ Apps 1-5 + Test (50%)                   │
+│ │ Gateway API │ → Apps 1-5 + Test (50%)                     │
 │ └─────────────┘                                             │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
 │ Phase 3: État final (après validation)                      │
 │ ┌─────────────┐                                             │
-│ │ Gateway API │ ──→ Apps 1-10 + Test (100%)                 │
+│ │ Gateway API │ → Apps 1-10 + Test (100%)                   │
 │ └─────────────┘                                             │
 │ ┌─────────────┐                                             │
-│ │ NGINX       │ ──→ [Désactivé, conservé pour rollback]     │
+│ │ NGINX       │ → [Désactivé, conservé pour rollback]       │
 │ │ Ingress     │                                             │
 │ └─────────────┘                                             │
 └─────────────────────────────────────────────────────────────┘
