@@ -1,0 +1,52 @@
+# ==========================================
+# Configuration Terraform pour Migration NGINX → Gateway API
+# Copier ce fichier vers terraform.tfvars et adapter
+# ==========================================
+
+# === PROXMOX CONFIGURATION ===
+proxmox_api_url          = "https://your_proxmox_url:8006"
+proxmox_api_token_id     = "your_user@realm!token_id"
+proxmox_api_token_secret = "your_token_secret"
+proxmox_ssh_user         = "your_ssh_user"
+proxmox_ssh_password     = "your_ssh_password"
+proxmox_node             = "pve"
+proxmox_storage          = "local-lvm"
+proxmox_bridge           = "vmbr0"
+
+# Template Talos (VM ID à créer au préalable)
+talos_template_vm_id       = 9001
+observability_template_vm_id = 9000
+
+# === NETWORK CONFIGURATION ===
+network_gateway = "x.x.x.1"
+dns_servers     = ["1.1.1.1", "8.8.8.8"]
+
+# IPs statiques pour les nœuds
+control_plane_base_ip = "x.x.x."   # Sera x.x.x.130
+worker_base_ip        = "x.x.x."   # Sera x.x.x.132, x.x.x.133
+control_plane_vip     = "x.x.x.130"  # VIP Kubernetes API
+
+# === CLUSTER CONFIGURATION ===
+cluster_name = "nginx-to-gateway-cluster"
+environment  = "prod"
+
+# === CONTROL PLANE CONFIGURATION (1 seul node) ===
+control_plane_count        = 1
+control_plane_cpu_cores    = 4
+control_plane_memory_mb    = 8192
+control_plane_disk_size_gb = 60
+
+# Worker Sizing (2 workers)
+worker_count              = 2
+worker_cpu_cores          = 4
+worker_memory_mb          = 16384
+worker_disk_size_gb       = 80
+worker_app_disk_size_gb   = 100
+
+# Observability Node Sizing (Ubuntu)
+observability_cpu_cores    = 4
+observability_memory_mb    = 8192
+observability_disk_size_gb = 60
+
+# Tags
+tags = ["gateway-api", "migration", "cncf"]
