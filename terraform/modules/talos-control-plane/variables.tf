@@ -61,7 +61,7 @@ variable "tags" {
 }
 
 output "control_plane_ip" {
-  value = "192.168.1.130"
+  value = "x.x.x.130"
 }
 
 output "kubeconfig" {

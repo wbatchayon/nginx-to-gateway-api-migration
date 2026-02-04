@@ -61,9 +61,9 @@ variable "tags" {
 }
 
 output "worker_ips" {
-  value = ["192.168.1.132", "192.168.1.133"]
+  value = ["x.x.x.132", "x.x.x.133"]
 }
 
 output "gateway_lb_ip" {
-  value = "192.168.1.132"
+  value = "x.x.x.132"
 }
