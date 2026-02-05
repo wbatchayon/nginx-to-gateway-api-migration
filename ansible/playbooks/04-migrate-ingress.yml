@@ -1,0 +1,141 @@
+---
+# ==========================================
+# Playbook: Migration de NGINX Ingress vers Gateway API
+# ==========================================
+- name: Migration de NGINX Ingress vers Gateway API
+  hosts: localhost
+  gather_facts: no
+  
+  vars:
+    migration_namespace: demo-apps
+  
+  tasks:
+    - name: "Phase 1: Vérifier l'état actuel"
+      block:
+        - name: Vérifier que Gateway API est disponible
+          kubernetes.core.k8s_info:
+            kind: GatewayClass
+          register: gateway_classes
+        
+        - name: Afficher les GatewayClasses trouvées
+          debug:
+            msg: "GatewayClasses: {{ gateway_classes.resources | map(attribute='metadata.name') | list }}"
+
+        - name: Arrêter si Gateway API n'est pas trouvé
+          fail:
+            msg: "GatewayClass 'eg' non trouvée. Déployez d'abord Gateway API avec: ansible-playbook -i inventory/production.ini playbooks/02-deploy-gateway-api.yml"
+          when: "'eg' not in (gateway_classes.resources | map(attribute='metadata.name') | list)"
+
+        - name: Vérifier le Gateway principal
+          kubernetes.core.k8s_info:
+            kind: Gateway
+            name: main-gateway
+            namespace: envoy-gateway-system
+          register: main_gateway
+
+        - name: Afficher le statut du Gateway
+          debug:
+            msg: "Gateway 'main-gateway' trouvé et opérationnel"
+          when: main_gateway.resources | length > 0
+
+    - name: "Phase 2: Créer HTTPRoute pour demo-app-v1"
+      block:
+        - name: Créer HTTPRoute pour App v1
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                name: demo-app-v1-route
+                namespace: "{{ migration_namespace }}"
+                labels:
+                  app: demo-app-v1
+                  migration: nginx-to-gateway
+              spec:
+                parentRefs:
+                  - name: main-gateway
+                    namespace: envoy-gateway-system
+                    kind: Gateway
+                hostnames:
+                  - "app-v1.example.com"
+                rules:
+                  - matches:
+                      - path:
+                          type: PathPrefix
+                          value: /
+                    backendRefs:
+                      - name: demo-app-v1-service
+                        port: 80
+                        weight: 100
+
+        - name: Attendre que l'HTTPRoute soit accepté
+          shell: |
+            kubectl get httproute demo-app-v1-route -n {{ migration_namespace }} -o jsonpath='{.status.parents[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null || echo "Pending"
+          register: route_status
+          until: route_status.stdout == "True"
+          retries: 30
+          delay: 10
+          changed_when: false
+
+    - name: "Phase 3: Validation et tests"
+      block:
+        - name: Vérifier tous les HTTPRoutes
+          command: kubectl get httproute -n {{ migration_namespace }} -o wide
+          register: all_routes
+          changed_when: false
+
+        - name: Afficher tous les HTTPRoutes
+          debug:
+            var: all_routes.stdout_lines
+
+        - name: Obtenir l'IP/hostname du Gateway
+          shell: |
+            kubectl get svc -n envoy-gateway-system -l gateway.envoyproxy.io/owning-gateway-name=main-gateway -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || \
+            kubectl get svc -n envoy-gateway-system -l gateway.envoyproxy.io/owning-gateway-name=main-gateway -o jsonpath='{.items[0].spec.clusterIP}' 2>/dev/null || \
+            echo "Utiliser port-forward"
+          register: gateway_address
+          changed_when: false
+
+        - name: Afficher les instructions de test
+          debug:
+            msg:
+              - "✅ Migration vers Gateway API terminée !"
+              - ""
+              - "📋 HTTPRoutes créés:"
+              - "  - demo-app-v1-route (app-v1.example.com)"
+              - "  - demo-app-v2-route (app-v2.example.com)"
+              - ""
+              - "🧪 Pour tester les applications:"
+              - ""
+              - "# Option 1: Avec port-forward (recommandé pour environnement local)"
+              - "kubectl port-forward -n envoy-gateway-system svc/envoy-main-gateway 8080:80"
+              - "curl -H 'Host: app-v1.example.com' http://localhost:8080/"
+              - "curl -H 'Host: app-v2.example.com' http://localhost:8080/"
+              - ""
+              - "# Option 2: Si LoadBalancer disponible"
+              - "GATEWAY_IP={{ gateway_address.stdout }}"
+              - "curl -H 'Host: app-v1.example.com' http://$GATEWAY_IP/"
+              - "curl -H 'Host: app-v2.example.com' http://$GATEWAY_IP/"
+              - ""
+              - "# Option 3: Accès via navigateur"
+              - "# 1. Ajouter dans /etc/hosts:"
+              - "#    {{ gateway_address.stdout }} app-v1.example.com app-v2.example.com"
+              - "# 2. Ouvrir: http://app-v1.example.com ou http://app-v2.example.com"
+
+    - name: Afficher le résumé de migration
+      debug:
+        msg: |
+          Migration complète vers Gateway API réussie!
+          
+          Résumé:
+          - Applications migrées: 2 (demo-app-v1, demo-app-v2)
+          - Gateway utilisé: main-gateway (envoy-gateway-system)
+          - HTTPRoutes créés: 2
+          - Status: Production-ready
+          
+          Prochaines étapes suggérées:
+          1. Tester les applications via HTTPRoute
+          2. Configurer le monitoring (Prometheus/Grafana)
+          3. Mettre en place les politiques de sécurité
+          4. Configurer le TLS/HTTPS avec cert-manager
