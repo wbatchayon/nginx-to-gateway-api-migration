@@ -1,0 +1,334 @@
+---
+# ==========================================
+# Playbook: Déploiement des applications de démo
+# ==========================================
+- name: Déployer les applications de démonstration
+  hosts: localhost
+  gather_facts: no
+  
+  tasks:
+    # ==========================================
+    # Application V1 - NGINX Ingress (Legacy)
+    # ==========================================
+    - name: Déployer l'application v1 (NGINX Ingress)
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: demo-app-v1
+            namespace: demo-apps
+            labels:
+              app: demo-app-v1
+              version: v1
+              routing: nginx-ingress
+          spec:
+            replicas: 3
+            selector:
+              matchLabels:
+                app: demo-app-v1
+            template:
+              metadata:
+                labels:
+                  app: demo-app-v1
+                  version: v1
+              spec:
+                containers:
+                  - name: nginx
+                    image: nginx:alpine
+                    ports:
+                      - containerPort: 80
+                        name: http
+                    volumeMounts:
+                      - name: html
+                        mountPath: /usr/share/nginx/html
+                    resources:
+                      requests:
+                        cpu: 50m
+                        memory: 64Mi
+                      limits:
+                        cpu: 100m
+                        memory: 128Mi
+                volumes:
+                  - name: html
+                    configMap:
+                      name: demo-app-v1-html
+    
+    - name: Créer le ConfigMap pour app v1
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: demo-app-v1-html
+            namespace: demo-apps
+          data:
+            index.html: |
+              <!DOCTYPE html>
+              <html>
+              <head>
+                  <title>Demo App V1 - NGINX Ingress</title>
+                  <style>
+                      body {
+                          font-family: Arial, sans-serif;
+                          max-width: 800px;
+                          margin: 50px auto;
+                          padding: 20px;
+                          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                          color: white;
+                      }
+                      .container {
+                          background: rgba(255,255,255,0.1);
+                          padding: 30px;
+                          border-radius: 10px;
+                          backdrop-filter: blur(10px);
+                      }
+                      h1 { color: #fff; }
+                      .badge {
+                          display: inline-block;
+                          padding: 5px 10px;
+                          background: #ff6b6b;
+                          border-radius: 5px;
+                          font-size: 0.8em;
+                      }
+                      .info {
+                          background: rgba(255,255,255,0.2);
+                          padding: 15px;
+                          border-radius: 5px;
+                          margin: 20px 0;
+                      }
+                  </style>
+              </head>
+              <body>
+                  <div class="container">
+                      <h1>🔴 Demo App V1</h1>
+                      <span class="badge">NGINX Ingress (Legacy)</span>
+                      <div class="info">
+                          <p><strong>Routing:</strong> Via NGINX Ingress Controller</p>
+                          <p><strong>Configuration:</strong> Annotations-based</p>
+                          <p><strong>Status:</strong> À migrer vers Gateway API</p>
+                      </div>
+                      <p>Cette application utilise encore NGINX Ingress Controller avec des annotations.</p>
+                      <p>⚠️ CVE-2025-1974 : Cette approche présente des risques de sécurité.</p>
+                  </div>
+              </body>
+              </html>
+    
+    - name: Créer le Service pour app v1
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: demo-app-v1-service
+            namespace: demo-apps
+          spec:
+            selector:
+              app: demo-app-v1
+            ports:
+              - protocol: TCP
+                port: 80
+                targetPort: 80
+            type: ClusterIP
+    
+    # ==========================================
+    # Application V2 - Gateway API (Modern)
+    # ==========================================
+    - name: Déployer l'application v2 (Gateway API)
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: demo-app-v2
+            namespace: demo-apps
+            labels:
+              app: demo-app-v2
+              version: v2
+              routing: gateway-api
+          spec:
+            replicas: 3
+            selector:
+              matchLabels:
+                app: demo-app-v2
+            template:
+              metadata:
+                labels:
+                  app: demo-app-v2
+                  version: v2
+              spec:
+                containers:
+                  - name: nginx
+                    image: nginx:alpine
+                    ports:
+                      - containerPort: 80
+                        name: http
+                    volumeMounts:
+                      - name: html
+                        mountPath: /usr/share/nginx/html
+                    resources:
+                      requests:
+                        cpu: 50m
+                        memory: 64Mi
+                      limits:
+                        cpu: 100m
+                        memory: 128Mi
+                volumes:
+                  - name: html
+                    configMap:
+                      name: demo-app-v2-html
+    
+    - name: Créer le ConfigMap pour app v2
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: demo-app-v2-html
+            namespace: demo-apps
+          data:
+            index.html: |
+              <!DOCTYPE html>
+              <html>
+              <head>
+                  <title>Demo App V2 - Gateway API</title>
+                  <style>
+                      body {
+                          font-family: Arial, sans-serif;
+                          max-width: 800px;
+                          margin: 50px auto;
+                          padding: 20px;
+                          background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+                          color: white;
+                      }
+                      .container {
+                          background: rgba(255,255,255,0.1);
+                          padding: 30px;
+                          border-radius: 10px;
+                          backdrop-filter: blur(10px);
+                      }
+                      h1 { color: #fff; }
+                      .badge {
+                          display: inline-block;
+                          padding: 5px 10px;
+                          background: #20bf6b;
+                          border-radius: 5px;
+                          font-size: 0.8em;
+                      }
+                      .info {
+                          background: rgba(255,255,255,0.2);
+                          padding: 15px;
+                          border-radius: 5px;
+                          margin: 20px 0;
+                      }
+                  </style>
+              </head>
+              <body>
+                  <div class="container">
+                      <h1>✅ Demo App V2</h1>
+                      <span class="badge">Gateway API (Modern)</span>
+                      <div class="info">
+                          <p><strong>Routing:</strong> Via Gateway API (Envoy)</p>
+                          <p><strong>Configuration:</strong> CRDs typés (HTTPRoute)</p>
+                          <p><strong>Status:</strong> Standard CNCF, Production-ready</p>
+                      </div>
+                      <p>Cette application utilise Gateway API, le standard moderne de la CNCF.</p>
+                      <p>✅ Sécurité renforcée, governance claire, multi-tenancy natif.</p>
+                  </div>
+              </body>
+              </html>
+    
+    - name: Créer le Service pour app v2
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: demo-app-v2-service
+            namespace: demo-apps
+          spec:
+            selector:
+              app: demo-app-v2
+            ports:
+              - protocol: TCP
+                port: 80
+                targetPort: 80
+            type: ClusterIP
+    
+    # ==========================================
+    # Gateway API HTTPRoute pour app v2
+    # ==========================================
+    - name: Créer HTTPRoute pour app v2
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: demo-app-v2-route
+            namespace: demo-apps
+          spec:
+            parentRefs:
+              - name: main-gateway
+                namespace: gateway-system
+            hostnames:
+              - "app-v2.example.com"
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /
+                backendRefs:
+                  - name: demo-app-v2-service
+                    port: 80
+    
+    - name: Attendre que les déploiements soient prêts
+      command: kubectl wait --for=condition=available --timeout=120s deployment/{{ item }} -n demo-apps
+      loop:
+        - demo-app-v1
+        - demo-app-v2
+      changed_when: false
+    
+    - name: Vérifier les déploiements
+      command: kubectl get deployments -n demo-apps
+      register: deployments
+      changed_when: false
+      
+    - name: Afficher les déploiements
+      debug:
+        var: deployments.stdout_lines
+    
+    - name: Vérifier les services
+      command: kubectl get services -n demo-apps
+      register: services
+      changed_when: false
+      
+    - name: Afficher les services
+      debug:
+        var: services.stdout_lines
+    
+    - name: Vérifier HTTPRoute
+      command: kubectl get httproute -n demo-apps
+      register: httproute
+      changed_when: false
+      
+    - name: Afficher HTTPRoute
+      debug:
+        var: httproute.stdout_lines
+    
+    - name: Afficher le résumé du déploiement
+      debug:
+        msg:
+          - "Application V1 déployée (NGINX Ingress - Legacy)"
+          - "Application V2 déployée (Gateway API - Modern)"
+          - "HTTPRoute configuré pour V2"
+          - "Applications de démo opérationnelles !"
+          - "Pour tester:"
+          - "   V2 (Gateway API): curl -H 'Host: app-v2.example.com' http://<GATEWAY-IP>/"
+          - "   V1 (NGINX Ingress): curl http://<INGRESS-IP>/api/v1"
