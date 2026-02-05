@@ -1,0 +1,98 @@
+---
+# ==========================================
+# Playbook: Vérification des prérequis
+# ==========================================
+- name: Vérifier les prérequis pour la migration
+  hosts: localhost
+  gather_facts: yes
+  
+  tasks:
+    - name: Vérifier la version de kubectl
+      command: kubectl version --client --output=json
+      register: kubectl_version
+      changed_when: false
+      
+    - name: Afficher la version kubectl
+      debug:
+        msg: "kubectl version: {{ (kubectl_version.stdout | from_json).clientVersion.gitVersion }}"
+    
+    - name: Vérifier la version de helm
+      command: helm version --short
+      register: helm_version
+      changed_when: false
+      ignore_errors: yes
+      
+    - name: Afficher la version helm
+      debug:
+        msg: "helm version: {{ helm_version.stdout }}"
+      when: helm_version.rc == 0
+    
+    - name: Vérifier la connexion au cluster
+      command: kubectl cluster-info
+      register: cluster_info
+      changed_when: false
+      
+    - name: Afficher les informations du cluster
+      debug:
+        var: cluster_info.stdout_lines
+    
+    - name: Vérifier les nœuds du cluster
+      command: kubectl get nodes -o wide
+      register: nodes_info
+      changed_when: false
+      
+    - name: Afficher les nœuds
+      debug:
+        var: nodes_info.stdout_lines
+    
+    - name: Créer le namespace pour Gateway API
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-system
+            labels:
+              name: gateway-system
+              app.kubernetes.io/name: gateway-api
+    
+    - name: Créer le namespace pour les applications
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: demo-apps
+            labels:
+              name: demo-apps
+    
+    - name: Créer le namespace pour l'observabilité
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: monitoring
+            labels:
+              name: monitoring
+    
+    - name: Vérifier les namespaces créés
+      command: kubectl get namespaces
+      register: namespaces
+      changed_when: false
+      
+    - name: Afficher les namespaces
+      debug:
+        var: namespaces.stdout_lines
+
+    - name: Afficher le résumé des prérequis
+      debug:
+        msg:
+          - "kubectl: {{ (kubectl_version.stdout | from_json).clientVersion.gitVersion }}"
+          - "helm: {{ helm_version.stdout | default('Non installé') }}"
+          - "Cluster connecté: {{ cluster_name }}"
+          - "Namespaces créés: gateway-system, demo-apps, monitoring"
+          - "Prêt pour le déploiement de Gateway API !"
