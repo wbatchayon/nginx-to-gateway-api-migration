@@ -1,0 +1,132 @@
+---
+# ==========================================
+# Playbook: Vérification du cluster Talos
+# Le cluster a été bootstrappé par Terraform
+# Ce playbook vérifie simplement qu'il est opérationnel
+# ==========================================
+- name: Vérifier le cluster Talos Kubernetes
+  hosts: localhost
+  gather_facts: no
+  
+  vars:
+    kubeconfig_path: "{{ lookup('env', 'HOME') }}/.kube/config"
+    cluster_name: "nginx-to-gateway-cluster"
+
+  tasks:
+    - name: "1. Vérifier que kubectl est configuré"
+      block:
+        - name: Tester la connexion au cluster
+          command: kubectl cluster-info
+          environment:
+            KUBECONFIG: "{{ kubeconfig_path }}"
+          register: cluster_info
+          changed_when: false
+
+        - name: Afficher les informations du cluster
+          debug:
+            var: cluster_info.stdout_lines
+
+    - name: "2. Vérifier les nœuds du cluster"
+      block:
+        - name: Obtenir la liste des nœuds
+          command: kubectl get nodes -o wide
+          environment:
+            KUBECONFIG: "{{ kubeconfig_path }}"
+          register: nodes_info
+          changed_when: false
+
+        - name: Afficher les nœuds
+          debug:
+            var: nodes_info.stdout_lines
+
+        - name: Vérifier que tous les nœuds sont Ready
+          shell: |
+            kubectl get nodes --no-headers | grep -v "Ready" | wc -l
+          environment:
+            KUBECONFIG: "{{ kubeconfig_path }}"
+          register: nodes_not_ready
+          changed_when: false
+          failed_when: nodes_not_ready.stdout | int > 0
+
+    - name: "3. Vérifier CoreDNS"
+      block:
+        - name: Vérifier les pods CoreDNS
+          command: kubectl get pods -n kube-system -l k8s-app=kube-dns
+          environment:
+            KUBECONFIG: "{{ kubeconfig_path }}"
+          register: coredns_pods
+          changed_when: false
+
+        - name: Afficher l'état de CoreDNS
+          debug:
+            var: coredns_pods.stdout_lines
+
+    - name: "4. Vérifier les namespaces système"
+      block:
+        - name: Lister tous les namespaces
+          command: kubectl get namespaces
+          environment:
+            KUBECONFIG: "{{ kubeconfig_path }}"
+          register: namespaces
+          changed_when: false
+
+        - name: Afficher les namespaces
+          debug:
+            var: namespaces.stdout_lines
+
+    - name: "5. Créer les namespaces nécessaires"
+      block:
+        - name: Créer le namespace pour Gateway API
+          kubernetes.core.k8s:
+            name: envoy-gateway-system
+            api_version: v1
+            kind: Namespace
+            state: present
+            kubeconfig: "{{ kubeconfig_path }}"
+
+        - name: Créer le namespace pour les applications
+          kubernetes.core.k8s:
+            name: demo-apps
+            api_version: v1
+            kind: Namespace
+            state: present
+            kubeconfig: "{{ kubeconfig_path }}"
+
+        - name: Créer le namespace pour le monitoring
+          kubernetes.core.k8s:
+            name: monitoring
+            api_version: v1
+            kind: Namespace
+            state: present
+            kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: "6. Résumé de la vérification"
+      block:
+        - name: Obtenir le nombre de nœuds
+          shell: kubectl get nodes --no-headers | wc -l
+          environment:
+            KUBECONFIG: "{{ kubeconfig_path }}"
+          register: nodes_count
+          changed_when: false
+
+        - name: Obtenir la version Kubernetes
+          shell: kubectl version --short 2>/dev/null | grep Server || kubectl version -o json | jq -r '.serverVersion.gitVersion'
+          environment:
+            KUBECONFIG: "{{ kubeconfig_path }}"
+          register: k8s_version
+          changed_when: false
+
+        - name: Afficher le résumé
+          debug:
+            msg:
+              - "Cluster Kubernetes opérationnel !"
+              - "Informations du cluster:"
+              - "  - Nom: {{ cluster_name }}"
+              - "  - Nœuds: {{ nodes_count.stdout }}"
+              - "  - Version K8s: {{ k8s_version.stdout }}"
+              - "  - Kubeconfig: {{ kubeconfig_path }}"
+              - "Namespaces créés:"
+              - "  - envoy-gateway-system (pour Gateway API)"
+              - "  - demo-apps (pour les applications)"
+              - "  - monitoring (pour l'observabilité)"
+              - "Prêt pour le déploiement de Gateway API !"
