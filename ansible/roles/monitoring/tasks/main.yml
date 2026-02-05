@@ -1,0 +1,137 @@
+---
+# Rôle Monitoring - Déployer la pile Prometheus, Grafana, Loki
+
+- name: Add monitoring Helm repositories
+  block:
+    - name: Add Prometheus Helm repo
+      kubernetes.core.helm_repository:
+        name: prometheus
+        repo_url: https://prometheus-community.github.io/helm-charts
+        state: present
+
+    - name: Add Grafana Helm repo
+      kubernetes.core.helm_repository:
+        name: grafana
+        repo_url: https://grafana.github.io/helm-charts
+        state: present
+
+- name: Deploy Prometheus
+  kubernetes.core.helm:
+    name: prometheus
+    chart_ref: prometheus/kube-prometheus-stack
+    release_namespace: monitoring
+    create_namespace: true
+    state: present
+    kubeconfig: "{{ kubeconfig_local }}"
+    values:
+      prometheus:
+        prometheusSpec:
+          retention: 15d
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1
+              memory: 1Gi
+
+- name: Deploy Grafana
+  block:
+    - name: Create Grafana admin secret
+      kubernetes.core.k8s:
+        state: present
+        kubeconfig: "{{ kubeconfig_local }}"
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: grafana-admin
+            namespace: monitoring
+          type: Opaque
+          stringData:
+            admin-user: admin
+            admin-password: "{{ grafana_admin_password | default('admin123456') }}"
+
+    - name: Deploy Grafana Helm chart
+      kubernetes.core.helm:
+        name: grafana
+        chart_ref: grafana/grafana
+        release_namespace: monitoring
+        state: present
+        kubeconfig: "{{ kubeconfig_local }}"
+        values:
+          adminUser: admin
+          adminPassword: "{{ grafana_admin_password | default('admin123456') }}"
+          datasources:
+            datasources.yaml:
+              apiVersion: 1
+              datasources:
+                - name: Prometheus
+                  type: prometheus
+                  url: http://prometheus-operated:9090
+                  access: proxy
+                  isDefault: true
+          dashboardProviders:
+            dashboardproviders.yaml:
+              apiVersion: 1
+              providers:
+                - name: 'default'
+                  orgId: 1
+                  folder: ''
+                  type: file
+                  disableDeletion: false
+                  editable: true
+                  options:
+                    path: /var/lib/grafana/dashboards
+
+- name: Deploy Loki
+  block:
+    - name: Create Loki namespace label
+      kubernetes.core.k8s:
+        state: present
+        kubeconfig: "{{ kubeconfig_local }}"
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: monitoring
+            labels:
+              name: monitoring
+
+    - name: Deploy Loki using Helm
+      kubernetes.core.helm:
+        name: loki
+        chart_ref: grafana/loki-stack
+        release_namespace: monitoring
+        state: present
+        kubeconfig: "{{ kubeconfig_local }}"
+        values:
+          loki:
+            config:
+              limits_config:
+                retention_period: 7d
+
+- name: Wait for monitoring stack to be ready
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: monitoring
+    kubeconfig: "{{ kubeconfig_local }}"
+  register: monitoring_pods
+  until: monitoring_pods.resources | length > 0
+  retries: 30
+  delay: 10
+
+- name: Display monitoring stack status
+  debug:
+    msg: |
+      Monitoring stack deployed successfully!
+      
+      Access URLs (after port-forward):
+      - Prometheus: http://localhost:9090
+      - Grafana: http://localhost:3000
+      - Loki: http://localhost:3100
+      
+      Setup port-forwards with:
+      kubectl port-forward -n monitoring svc/prometheus 9090:9090 &
+      kubectl port-forward -n monitoring svc/grafana 3000:3000 &
+      kubectl port-forward -n monitoring svc/loki 3100:3100 &

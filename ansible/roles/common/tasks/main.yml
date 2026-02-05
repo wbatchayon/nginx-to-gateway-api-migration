@@ -1,0 +1,90 @@
+---
+# Common Tasks Role - Setup baseline kubernetes components
+
+- name: Install common tools
+  block:
+    - name: Update package cache
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Install basic tools
+      package:
+        name:
+          - curl
+          - wget
+          - jq
+          - git
+          - rsync
+        state: present
+
+- name: Verify kubeconfig
+  block:
+    - name: Check kubeconfig exists
+      stat:
+        path: "{{ kubeconfig_local }}"
+      register: kubeconfig_stat
+
+    - name: Fail if kubeconfig missing
+      fail:
+        msg: "Kubeconfig not found at {{ kubeconfig_local }}"
+      when: not kubeconfig_stat.stat.exists
+
+- name: Verify cluster connectivity
+  block:
+    - name: Test cluster connectivity
+      command: kubectl cluster-info
+      environment:
+        KUBECONFIG: "{{ kubeconfig_local }}"
+      register: cluster_info
+      changed_when: false
+
+    - name: Display cluster info
+      debug:
+        msg: "{{ cluster_info.stdout }}"
+
+- name: Setup default namespaces
+  kubernetes.core.k8s:
+    name: "{{ item }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+    kubeconfig: "{{ kubeconfig_local }}"
+  loop:
+    - monitoring
+    - envoy-gateway-system
+    - demo-app-v1
+    - demo-app-v2
+    - nginx-ingress
+
+- name: Label nodes for workload placement
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_local }}"
+    definition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: "{{ item }}"
+        labels:
+          workload-type: observability
+  loop: "{{ observability_nodes | default([]) }}"
+  ignore_errors: yes
+
+- name: Apply default network policies
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_local }}"
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: default-deny-ingress
+        namespace: "{{ item }}"
+      spec:
+        podSelector: {}
+        policyTypes:
+          - Ingress
+  loop:
+    - demo-app-v1
+    - demo-app-v2

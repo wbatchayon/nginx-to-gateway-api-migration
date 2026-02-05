@@ -1,0 +1,96 @@
+---
+# Rôle Gateway API - Déployer Envoy Gateway et ressources associées
+
+- name: Deploy Envoy Gateway CRDs
+  block:
+    - name: Add Envoy Gateway Helm repository
+      kubernetes.core.helm_repository:
+        name: envoy-gateway
+        repo_url: https://helm.envoyproxy.io
+        state: present
+
+    - name: Deploy Envoy Gateway CRDs using Helm
+      kubernetes.core.helm:
+        name: envoy-gateway
+        chart_ref: envoy-gateway/envoy-gateway
+        release_namespace: envoy-gateway-system
+        create_namespace: true
+        state: present
+        kubeconfig: "{{ kubeconfig_local }}"
+        values:
+          createNamespace: true
+
+- name: Wait for Envoy Gateway to be ready
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: envoy-gateway-system
+    kubeconfig: "{{ kubeconfig_local }}"
+    label_selectors:
+      - "app.kubernetes.io/name=envoy-gateway"
+  register: envoy_pods
+  until: envoy_pods.resources | length > 0 and envoy_pods.resources[0].status.phase == "Running"
+  retries: 30
+  delay: 10
+
+- name: Deploy GatewayClass
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_local }}"
+    definition:
+      apiVersion: gateway.networking.k8s.io/v1
+      kind: GatewayClass
+      metadata:
+        name: envoy
+        namespace: envoy-gateway-system
+      spec:
+        controllerName: gateway.envoyproxy.io/gatewayclass-controller
+        description: "Envoy Gateway GatewayClass for production workloads"
+
+- name: Deploy Gateway resource
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ kubeconfig_local }}"
+    definition:
+      apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      metadata:
+        name: production
+        namespace: default
+      spec:
+        gatewayClassName: envoy
+        listeners:
+          - name: http
+            port: 80
+            protocol: HTTP
+            allowedRoutes:
+              namespaces:
+                from: All
+          - name: https
+            port: 443
+            protocol: HTTPS
+            tls:
+              mode: Terminate
+              certificateRefs:
+                - name: tls-cert-production
+                  kind: Secret
+            allowedRoutes:
+              namespaces:
+                from: All
+
+- name: Verify Gateway API deployment
+  kubernetes.core.k8s_info:
+    kind: Gateway
+    name: production
+    namespace: default
+    kubeconfig: "{{ kubeconfig_local }}"
+  register: gateway_info
+  until: gateway_info.resources | length > 0
+  retries: 30
+  delay: 5
+
+- name: Display Gateway API status
+  debug:
+    msg: |
+      Gateway API deployed successfully!
+      Gateway: {{ gateway_info.resources[0].metadata.name }}
+      Status: {{ gateway_info.resources[0].status | default('Pending') }}
