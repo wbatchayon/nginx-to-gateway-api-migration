@@ -1,0 +1,202 @@
+---
+# ==========================================
+# Playbook: Déploiement de Gateway API
+# ==========================================
+- name: Déployer Gateway API et Envoy Gateway
+  hosts: localhost
+  gather_facts: no
+  
+  vars:
+    gateway_api_version: "v1.2.1"
+    envoy_gateway_version: "v1.2.2"
+    
+  tasks:
+    - name: Vérifier la connexion au cluster
+      command: kubectl cluster-info
+      changed_when: false
+
+    - name: Nettoyer l'ancien namespace s'il existe
+      block:
+        - name: Vérifier si le namespace existe
+          command: kubectl get namespace envoy-gateway-system
+          register: ns_check
+          failed_when: false
+          changed_when: false
+
+        - name: Supprimer l'ancien namespace s'il existe et n'est pas en cours de suppression
+          command: kubectl delete namespace envoy-gateway-system --wait=false
+          when: ns_check.rc == 0
+          register: ns_delete
+          failed_when: false
+          changed_when: ns_delete.rc == 0
+
+        - name: Attendre la suppression complète du namespace
+          shell: |
+            while kubectl get namespace envoy-gateway-system 2>/dev/null; do
+              echo "Attente suppression namespace..."
+              sleep 5
+            done
+          when: ns_check.rc == 0
+          changed_when: false
+
+        - name: Pause pour stabilisation
+          pause:
+            seconds: 10
+          when: ns_check.rc == 0
+    
+    - name: Installer les CRDs Gateway API
+      command: |
+        kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/{{ gateway_api_version }}/standard-install.yaml
+      register: gateway_crds
+      changed_when: "'created' in gateway_crds.stdout or 'configured' in gateway_crds.stdout"
+      
+    - name: Attendre que les CRDs Gateway API soient établis
+      command: kubectl wait --for condition=established --timeout=60s crd/gatewayclasses.gateway.networking.k8s.io
+      changed_when: false
+
+    - name: Créer le namespace envoy-gateway-system
+      kubernetes.core.k8s:
+        name: envoy-gateway-system
+        api_version: v1
+        kind: Namespace
+        state: present
+      
+    - name: Installer Envoy Gateway via Helm (OCI registry)
+      kubernetes.core.helm:
+        name: eg
+        chart_ref: oci://docker.io/envoyproxy/gateway-helm
+        chart_version: "v1.2.2"
+        release_namespace: envoy-gateway-system
+        create_namespace: false
+        wait: true
+        wait_timeout: 5m
+        values:
+          config:
+            envoyGateway:
+              gateway:
+                controllerName: gateway.envoyproxy.io/gatewayclass-controller
+      
+    - name: Attendre que Envoy Gateway soit prêt
+      command: kubectl wait --for=condition=available --timeout=300s deployment/envoy-gateway -n envoy-gateway-system
+      changed_when: false
+      
+    - name: Créer la GatewayClass
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: eg
+          spec:
+            controllerName: gateway.envoyproxy.io/gatewayclass-controller
+      
+    - name: Créer le Gateway principal avec configuration simplifiée
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: main-gateway
+            namespace: envoy-gateway-system
+            annotations:
+              description: "Gateway principal pour la migration NGINX → Gateway API"
+          spec:
+            gatewayClassName: eg
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+                allowedRoutes:
+                  namespaces:
+                    from: All
+
+    - name: Attendre que le Gateway soit programmé
+      shell: |
+        for i in {1..24}; do
+          STATUS=$(kubectl get gateway main-gateway -n envoy-gateway-system -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}' 2>/dev/null || echo "Unknown")
+          if [ "$STATUS" = "True" ]; then
+            echo "Gateway programmé avec succès"
+            exit 0
+          fi
+          echo "Attente programmation Gateway... ($i/24)"
+          sleep 5
+        done
+        echo "Timeout - Gateway non programmé après 2 minutes"
+        exit 1
+      register: gateway_wait
+      changed_when: false
+      failed_when: false
+
+    - name: Vérifier le statut détaillé du Gateway
+      command: kubectl get gateway main-gateway -n envoy-gateway-system -o yaml
+      register: gateway_full_status
+      changed_when: false
+      when: gateway_wait.rc != 0
+
+    - name: Afficher les détails si le Gateway n'est pas programmé
+      debug:
+        msg:
+          - "Le Gateway n'est pas encore programmé"
+          - "Vérifiez les logs avec:"
+          - "kubectl logs -n envoy-gateway-system -l control-plane=envoy-gateway --tail=50"
+      when: gateway_wait.rc != 0
+
+    - name: Vérifier le statut du Gateway
+      command: kubectl get gateway -n envoy-gateway-system -o wide
+      register: gateway_status
+      changed_when: false
+      
+    - name: Afficher le statut du Gateway
+      debug:
+        var: gateway_status.stdout_lines
+      
+    - name: Vérifier les services créés
+      command: kubectl get svc -n envoy-gateway-system
+      register: gateway_services
+      changed_when: false
+      
+    - name: Afficher les services Gateway
+      debug:
+        var: gateway_services.stdout_lines
+
+    - name: Vérifier les pods Envoy Gateway
+      command: kubectl get pods -n envoy-gateway-system
+      register: gateway_pods
+      changed_when: false
+
+    - name: Afficher les pods
+      debug:
+        var: gateway_pods.stdout_lines
+      
+    - name: Créer un ReferenceGrant pour permettre l'accès cross-namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: gateway.networking.k8s.io/v1beta1
+          kind: ReferenceGrant
+          metadata:
+            name: allow-gateway-to-demo-apps
+            namespace: demo-apps
+          spec:
+            from:
+              - group: gateway.networking.k8s.io
+                kind: HTTPRoute
+                namespace: envoy-gateway-system
+            to:
+              - group: ""
+                kind: Service
+    
+    - name: Afficher le résumé du déploiement
+      debug:
+        msg:
+          - "Gateway API CRDs installés ({{ gateway_api_version }})"
+          - "Envoy Gateway déployé ({{ envoy_gateway_version }})"
+          - "GatewayClass 'eg' créée"
+          - "Gateway 'main-gateway' créé dans namespace envoy-gateway-system"
+          - "ReferenceGrant configuré pour cross-namespace routing"
+          - "{{ 'Gateway API opérationnel !' if gateway_wait.rc == 0 else 'Gateway créé mais vérifiez les logs' }}"
+          - "Pour déboguer si nécessaire:"
+          - "   kubectl logs -n envoy-gateway-system -l control-plane=envoy-gateway"
+          - "   kubectl describe gateway main-gateway -n envoy-gateway-system"
