@@ -1,0 +1,365 @@
+---
+# ==========================================
+# Gateway API - Configuration complète
+# ==========================================
+
+# GatewayClass - Défini le contrôleur à utiliser
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: eg
+  annotations:
+    description: "Envoy Gateway pour migration NGINX"
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  description: "Envoy Gateway implementation"
+
+---
+# Gateway - Infrastructure Layer (géré par l'équipe Platform)
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: main-gateway
+  namespace: gateway-system
+  annotations:
+    description: "Gateway principal pour toutes les applications"
+  labels:
+    environment: production
+    managed-by: platform-team
+spec:
+  gatewayClassName: eg
+  
+  listeners:
+    # Listener HTTP (port 80)
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: All  # Permet HTTPRoutes de tous les namespaces
+      
+    # Listener HTTPS (port 443) avec TLS
+    - name: https
+      protocol: HTTPS
+      port: 443
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: gateway-tls-cert
+            namespace: gateway-system
+    
+    # Listener HTTPS alternatif pour domaines spécifiques
+    - name: https-api
+      protocol: HTTPS
+      port: 8443
+      hostname: "*.api.example.com"
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-access: api
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: api-tls-cert
+
+---
+# ReferenceGrant - Permet l'accès cross-namespace
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-gateway-to-apps
+  namespace: demo-apps
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: gateway-system
+  to:
+    - group: ""
+      kind: Service
+
+---
+# HTTPRoute - Application Layer (géré par l'équipe App)
+# Exemple 1: Route simple
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: demo-app-v2-route
+  namespace: demo-apps
+  annotations:
+    description: "Route pour demo-app-v2"
+  labels:
+    app: demo-app-v2
+    routing: gateway-api
+spec:
+  parentRefs:
+    - name: main-gateway
+      namespace: gateway-system
+      sectionName: http  # Listener HTTP
+  
+  hostnames:
+    - "app-v2.example.com"
+  
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      
+      backendRefs:
+        - name: demo-app-v2-service
+          port: 80
+          weight: 100
+
+---
+# HTTPRoute - Exemple 2: Route avec filtres avancés
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api-route-advanced
+  namespace: demo-apps
+spec:
+  parentRefs:
+    - name: main-gateway
+      namespace: gateway-system
+      sectionName: https
+  
+  hostnames:
+    - "api.example.com"
+  
+  rules:
+    # Règle 1: Réécriture d'URL
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v1
+      
+      filters:
+        # Réécrire /api/v1/users → /users
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+        
+        # Ajouter des headers
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            add:
+              - name: X-API-Version
+                value: v1
+              - name: X-Routing-Method
+                value: gateway-api
+            remove:
+              - X-Custom-Debug  # Retirer headers debug en prod
+      
+      backendRefs:
+        - name: api-service
+          port: 8080
+    
+    # Règle 2: Canary deployment (répartition du trafic)
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v2
+      
+      backendRefs:
+        # 90% vers version stable
+        - name: api-v2-stable
+          port: 8080
+          weight: 90
+        
+        # 10% vers version canary
+        - name: api-v2-canary
+          port: 8080
+          weight: 10
+    
+    # Règle 3: Redirection
+    - matches:
+        - path:
+            type: Exact
+            value: /old-path
+      
+      filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            hostname: new.example.com
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /new-path
+            statusCode: 301
+
+---
+# HTTPRoute - Exemple 3: Route avec headers matching
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mobile-api-route
+  namespace: demo-apps
+spec:
+  parentRefs:
+    - name: main-gateway
+      namespace: gateway-system
+  
+  hostnames:
+    - "mobile.api.example.com"
+  
+  rules:
+    # Route spécifique pour clients Android
+    - matches:
+        - headers:
+            - type: Exact
+              name: X-Client-Type
+              value: android
+          path:
+            type: PathPrefix
+            value: /
+      
+      backendRefs:
+        - name: mobile-android-service
+          port: 8080
+    
+    # Route spécifique pour clients iOS
+    - matches:
+        - headers:
+            - type: Exact
+              name: X-Client-Type
+              value: ios
+          path:
+            type: PathPrefix
+            value: /
+      
+      backendRefs:
+        - name: mobile-ios-service
+          port: 8080
+    
+    # Route par défaut
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      
+      backendRefs:
+        - name: mobile-default-service
+          port: 8080
+
+---
+# HTTPRoute - Exemple 4: Timeout et retry
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: resilient-api-route
+  namespace: demo-apps
+  annotations:
+    # Note: Timeouts et retries configurés via EnvoyProxy CRD (extension Envoy Gateway)
+    description: "Route avec timeouts et retry policies"
+spec:
+  parentRefs:
+    - name: main-gateway
+      namespace: gateway-system
+  
+  hostnames:
+    - "resilient.api.example.com"
+  
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      
+      backendRefs:
+        - name: resilient-service
+          port: 8080
+
+---
+# EnvoyProxy - Extension pour configurations avancées Envoy
+# Note: CRD fourni par Envoy Gateway
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: custom-proxy-config
+  namespace: gateway-system
+spec:
+  # Timeouts globaux
+  backendRefs:
+    - name: "*"
+      timeout:
+        tcp:
+          connectTimeout: 10s
+        http:
+          requestTimeout: 60s
+  
+  # Retry policy
+  retry:
+    numRetries: 3
+    retryOn:
+      - "5xx"
+      - "gateway-error"
+    perTryTimeout: 10s
+
+---
+# TLSRoute - Route TLS/TCP (optionnel)
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: tcp-route
+  namespace: demo-apps
+spec:
+  parentRefs:
+    - name: main-gateway
+      namespace: gateway-system
+  
+  hostnames:
+    - "tcp.example.com"
+  
+  rules:
+    - backendRefs:
+        - name: tcp-service
+          port: 5432
+
+---
+# Exemple de Secret TLS pour Gateway
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gateway-tls-cert
+  namespace: gateway-system
+type: kubernetes.io/tls
+data:
+  # Certificat TLS (base64)
+  tls.crt: LS0tLS1CRUdJTi... (exemple)
+  # Clé privée (base64)
+  tls.key: LS0tLS1CRUdJTi... (exemple)
+
+---
+# NetworkPolicy - Sécuriser Gateway → Apps
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-gateway
+  namespace: demo-apps
+spec:
+  podSelector:
+    matchLabels:
+      app: demo-app-v2
+  
+  policyTypes:
+    - Ingress
+  
+  ingress:
+    # Autoriser uniquement le trafic depuis Envoy Gateway
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: envoy-gateway-system
+      ports:
+        - protocol: TCP
+          port: 80

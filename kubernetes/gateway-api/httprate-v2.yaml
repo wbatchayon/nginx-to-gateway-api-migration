@@ -1,0 +1,302 @@
+---
+# Gateway API - Définition de GatewayClass
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy
+  namespace: envoy-gateway-system
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  description: "Envoy Gateway GatewayClass for production workloads"
+
+---
+# Gateway API - Ressource Gateway
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: production
+  namespace: default
+spec:
+  gatewayClassName: envoy
+  listeners:
+    # Écouteur HTTP
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All
+    # Écouteur HTTPS
+    - name: https
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: tls-cert-production
+            kind: Secret
+      allowedRoutes:
+        namespaces:
+          from: All
+
+---
+# Application de Démonstration v2 - Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-app-v2
+  labels:
+    app: demo-v2
+
+---
+# Application de Démonstration v2 - ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-app-v2-config
+  namespace: demo-app-v2
+data:
+  APP_VERSION: "v2.0.0"
+  APP_ENVIRONMENT: "gateway-api"
+  LOG_LEVEL: "info"
+  API_PORT: "8080"
+
+---
+# Application de Démonstration v2 - Déploiement
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-app-v2
+  namespace: demo-app-v2
+  labels:
+    app: demo-app-v2
+    version: v2
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: demo-app-v2
+  template:
+    metadata:
+      labels:
+        app: demo-app-v2
+        version: v2
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: demo-app-v2
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: app
+          image: nginx:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: APP_VERSION
+              valueFrom:
+                configMapKeyRef:
+                  name: demo-app-v2-config
+                  key: APP_VERSION
+            - name: APP_ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: demo-app-v2-config
+                  key: APP_ENVIRONMENT
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+
+---
+# Demo Application v2 - Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-app-v2-service
+  namespace: demo-app-v2
+  labels:
+    app: demo-app-v2
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+  selector:
+    app: demo-app-v2
+
+---
+# Application de Démonstration v2 - ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: demo-app-v2
+  namespace: demo-app-v2
+
+---
+# Application de Démonstration v2 - HTTPRoute
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: demo-app-v2-route
+  namespace: demo-app-v2
+spec:
+  parentRefs:
+    - name: production
+      namespace: default
+      kind: Gateway
+  hostnames:
+    - "app-v2.demo.local"
+    - "api.demo.local"
+  rules:
+    # Route API v2
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v2
+      backendRefs:
+        - name: demo-app-v2-service
+          port: 8080
+          weight: 100
+    # Route de vérification de santé
+    - matches:
+        - path:
+            type: Exact
+            value: /health
+      backendRefs:
+        - name: demo-app-v2-service
+          port: 8080
+          weight: 100
+    # Route des métriques
+    - matches:
+        - path:
+            type: Exact
+            value: /metrics
+      backendRefs:
+        - name: demo-app-v2-service
+          port: 8080
+          weight: 100
+    # Route par défaut
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: demo-app-v2-service
+          port: 8080
+          weight: 100
+
+---
+# HTTPRoute - Configuration Sécurité (Limitation de débit)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: demo-app-v2-secure
+  namespace: demo-app-v2
+  labels:
+    app: demo-app-v2
+spec:
+  parentRefs:
+    - name: production
+      namespace: default
+      kind: Gateway
+  hostnames:
+    - "secure.demo.local"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      backendRefs:
+        - name: demo-app-v2-service
+          port: 8080
+          weight: 100
+
+---
+# PodDisruptionBudget - Garantir la disponibilité pendant la maintenance
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: demo-app-v2-pdb
+  namespace: demo-app-v2
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: demo-app-v2
+
+---
+# NetworkPolicy - Restreindre le trafic vers/depuis demo-app-v2
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: demo-app-v2-ingress
+  namespace: demo-app-v2
+spec:
+  podSelector:
+    matchLabels:
+      app: demo-app-v2
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Autoriser depuis Envoy Gateway
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: envoy-gateway-system
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # Autoriser DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+    # Autoriser les appels API externes
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
