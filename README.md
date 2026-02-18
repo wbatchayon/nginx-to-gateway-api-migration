@@ -4,7 +4,7 @@
 
 Projet complet de migration de NGINX Ingress Controller vers Gateway API (CNCF) sur un cluster Kubernetes Talos déployé sur Proxmox.
 
-**Architecture**: 1 Control Plane Talos + 1 Observability Ubuntu + 2 Workers Talos  
+**Architecture**: 1 Control Plane Talos + 1 Observability Ubuntu + 2 Workers Talos
 **Contexte CVE-2025-1974**: Migration répondant à la vulnérabilité critique (CVSS 9.8) affectant NGINX Ingress
 
 ## Architecture
@@ -60,7 +60,7 @@ helm version         # >= 3.12
 
 ```bash
 # Cloner le projet
-git clone 
+git clone
 cd nginx-to-gateway-api-migration
 
 # Copier et configurer les variables Terraform
@@ -187,5 +187,5 @@ MIT License - Voir [LICENSE](LICENSE)
 
 ---
 
-**⚠️ Note importante**: Ce projet est destiné à des environnements de test/POC. 
+**⚠️ Note importante**: Ce projet est destiné à des environnements de test/POC.
 Pour la production, adaptez les configurations selon vos contraintes de sécurité et conformité.

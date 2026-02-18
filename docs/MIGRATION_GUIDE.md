@@ -168,7 +168,7 @@ vim terraform.tfvars
 
 ```hcl
 proxmox_api_url = "https://votre-proxmox:8006"
-proxmox_api_token_id = "terraform@pve!terraform"
+proxmox_api_token_id = "votre-user@realm!token_id"
 proxmox_api_token_secret = "votre-secret"
 
 cluster_name = "talos-gateway-api"

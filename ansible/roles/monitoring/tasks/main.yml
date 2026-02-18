@@ -50,7 +50,7 @@
           type: Opaque
           stringData:
             admin-user: admin
-            admin-password: "{{ grafana_admin_password | default('admin123456') }}"
+            admin-password: "{{ grafana_admin_password | default('CHANGE_ME_IN_PRODUCTION') }}"
 
     - name: Deploy Grafana Helm chart
       kubernetes.core.helm:
@@ -61,7 +61,7 @@
         kubeconfig: "{{ kubeconfig_local }}"
         values:
           adminUser: admin
-          adminPassword: "{{ grafana_admin_password | default('admin123456') }}"
+          adminPassword: "{{ grafana_admin_password | default('CHANGE_ME_IN_PRODUCTION') }}"
           datasources:
             datasources.yaml:
               apiVersion: 1

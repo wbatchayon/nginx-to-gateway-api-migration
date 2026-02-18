@@ -1,0 +1,25 @@
+---
+# YAML Lint Configuration
+
+extends: default
+
+rules:
+  line-length:
+    max: 120
+    level: warning
+  indentation:
+    spaces: 2
+    indent-sequences: true
+  comments:
+    min-spaces-from-content: 1
+  document-start:
+    present: false
+  trailing-spaces: enable
+  new-line-at-end-of-file: enable
+  hyphens:
+    max-spaces-after: 1
+
+ignore:
+  - .terraform/
+  - vendor/
+  - node_modules/

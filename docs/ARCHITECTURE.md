@@ -225,7 +225,7 @@ kubectl get gateway,httproute --all-namespaces -o yaml > gateway-backup.yaml
 
 ```promql
 # Latence p99 Gateway API
-histogram_quantile(0.99, 
+histogram_quantile(0.99,
   rate(envoy_http_downstream_rq_time_bucket[5m])
 )
 
